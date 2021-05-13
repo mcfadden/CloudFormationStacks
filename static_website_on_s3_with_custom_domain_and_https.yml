@@ -1,0 +1,105 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Static website on S3 and CloudFront with custom Domain Name and SSL. After launching this stack you will need to validate the SSL certificate with a CNAME DNS entry, and also point the domain to the CloudFront origin. This does not currently use Route53.'
+Parameters:
+  DomainNameParameter:
+    Description: 'The domain used for the CloudFront traffic. Do not start with www.'
+    Type: String
+    Default: 'example.com'
+  DefaultRootObjectParameter:
+    Description: 'Index document'
+    Type: String
+    Default: 'index.html'
+Resources:
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      CertificateTransparencyLoggingPreference: ENABLED
+      DomainName: !Ref DomainNameParameter
+      ValidationMethod: DNS
+  S3Bucket:
+    Type: 'AWS::S3::Bucket'
+  ReadPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Statement:
+        - Action: 's3:GetObject'
+          Effect: Allow
+          Resource: !Sub 'arn:aws:s3:::${S3Bucket}/*'
+          Principal:
+            CanonicalUser: !GetAtt OriginAccessIdentity.S3CanonicalUserId
+  OriginAccessIdentity:
+    Type: 'AWS::CloudFront::CloudFrontOriginAccessIdentity'
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Ref S3Bucket
+  CloudFrontDistribution:
+    Type: 'AWS::CloudFront::Distribution'
+    Properties:
+      DistributionConfig:
+        Aliases:
+          - !Ref DomainNameParameter
+          - !Sub 'www.${DomainNameParameter}'
+        CacheBehaviors:
+        - AllowedMethods:
+          AllowedMethods:
+          - GET
+          - HEAD
+          - OPTIONS
+          CachedMethods:
+          - GET
+          - HEAD
+          - OPTIONS
+          Compress: true
+          DefaultTTL: 0
+          ForwardedValues:
+            Cookies:
+              Forward: none
+            QueryString: false
+          MaxTTL: 0 # in seconds
+          MinTTL: 0 # in seconds
+          PathPattern: data/current.json
+          TargetOriginId: !Ref S3Bucket
+          ViewerProtocolPolicy: 'redirect-to-https'
+        DefaultCacheBehavior:
+          AllowedMethods:
+          - GET
+          - HEAD
+          - OPTIONS
+          CachedMethods:
+          - GET
+          - HEAD
+          - OPTIONS
+          Compress: true
+          DefaultTTL: 3600
+          ForwardedValues:
+            Cookies:
+              Forward: none
+            QueryString: false
+          MaxTTL: 86400 # in seconds
+          MinTTL: 60 # in seconds
+          TargetOriginId: !Ref S3Bucket
+          ViewerProtocolPolicy: 'redirect-to-https'
+        DefaultRootObject: !Ref DefaultRootObjectParameter
+        Enabled: true
+        HttpVersion: http2
+        ViewerCertificate:
+          AcmCertificateArn: !Ref Certificate
+          MinimumProtocolVersion: TLSv1.2_2018
+          SslSupportMethod: sni-only
+        Origins:
+        - DomainName: !GetAtt 'S3Bucket.DomainName'
+          Id: !Ref S3Bucket
+          S3OriginConfig:
+            OriginAccessIdentity: !Sub 'origin-access-identity/cloudfront/${OriginAccessIdentity}'
+Outputs:
+  BucketName:
+    Description: 'S3 Bucket Name'
+    Value: !Ref S3Bucket
+  DistributionId:
+    Description: 'CloudFront Distribution ID'
+    Value: !Ref CloudFrontDistribution
+  Domain:
+    Description: 'Cloudfront Domain'
+    Value: !GetAtt CloudFrontDistribution.DomainName
